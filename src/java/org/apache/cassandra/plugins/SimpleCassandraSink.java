@@ -38,8 +38,6 @@ public class SimpleCassandraSink extends EventSink.Base {
 
   private static final UUIDGenerator uuidGen = UUIDGenerator.getInstance();
 
-  private static final long MILLI_TO_MICRO = 1000; // 1ms = 1000us
-
   public SimpleCassandraSink(String keyspace, String dataColumnFamily,
       String indexColumnFamily, String[] servers) {
     this.dataColumnFamily = dataColumnFamily;
@@ -63,7 +61,7 @@ public class SimpleCassandraSink extends EventSink.Base {
   @Override
   public void append(Event event) throws IOException, InterruptedException {
 
-    long timestamp = System.currentTimeMillis() * MILLI_TO_MICRO;
+    long timestamp = event.getNanos();
 
     // Make the index column
     UUID uuid = uuidGen.generateTimeBasedUUID();
@@ -77,11 +75,19 @@ public class SimpleCassandraSink extends EventSink.Base {
 			dataColumn.setName("data".getBytes());
 			dataColumn.setValue(event.getBody());
 			dataColumn.setTimestamp(timestamp);
+	
+	Column catColumn = new Column();
+	        catColumn.setName("category".getBytes());
+	        catColumn.setValue(event.get("scribe.category"));
+
+	Column hostColumn = new Column();
+	        hostColumn.setName("host".getBytes());
+	        hostColumn.setValue(event.getHost().getBytes());
 
     // Insert the index
-    this.cClient.insert(this.getKey(), this.indexColumnFamily, new Column[] {indexColumn}, ConsistencyLevel.QUORUM);
+    this.cClient.insert(this.getKey(event), this.indexColumnFamily, new Column[] {indexColumn}, ConsistencyLevel.LOCAL_QUORUM);
     // Insert the data (row key is the uuid and there is only one column)
-    this.cClient.insert(uuid.toString().getBytes(), this.dataColumnFamily, new Column[] {dataColumn}, ConsistencyLevel.QUORUM);
+    this.cClient.insert(uuid.toString().getBytes(), this.dataColumnFamily, new Column[] {dataColumn, catColumn, hostColumn}, ConsistencyLevel.LOCAL_QUORUM);
     super.append(event);
   }
 
@@ -89,8 +95,10 @@ public class SimpleCassandraSink extends EventSink.Base {
    * Returns a String representing the current date to be used as
    * a key.  This has the format "YYYYMMDDHH".
    */
-  private byte[] getKey() {
+  private byte[] getKey(Event event) {
     Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("GMT+0"));
+    cal.setTimeInMillis(event.getTimestamp());
+
     int day = cal.get(Calendar.DAY_OF_MONTH);
     int month = cal.get(Calendar.MONTH);
     int year = cal.get(Calendar.YEAR);
